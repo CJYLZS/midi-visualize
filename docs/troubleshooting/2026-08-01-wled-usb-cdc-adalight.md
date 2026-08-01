@@ -1,7 +1,15 @@
 # WLED 原生 USB CDC Adalight 排查复盘
 
 日期：2026-08-01  
-状态：已完成最小点灯链路验证；正式发送器尚待迁移修复
+状态：已完成最小点灯链路验证；正式发送器已迁移到 921600 基线
+
+> **当前基线（后续调试一律使用，勿回退 115200）**
+>
+> - 波特率：**921600**（WLED Sync Interfaces → Baud rate 与 `config.SERIAL_BAUD` 一致）
+> - 分块：128 字节 / 1 ms 间隔（`SERIAL_CHUNK_SIZE=128`、`SERIAL_CHUNK_DELAY=0.001`）
+> - 实测 ~80 FPS（工具：`tools/bench_fps.py`）
+> - **两个 USB 口必须同时连接**（COM4 原生 USB + COM5 CH340）。只插 COM4 单口时 USB 反复重连、WLED-AP 不出现——根因是单口供电裕量不足，详见文末"供电与双 USB 口"章节
+> - 本文档下文带 115200 的内容均为历史排查过程，数值已过时，仅保留推导思路
 
 ## 摘要
 
@@ -33,13 +41,16 @@ Windows / pyserial
 
 ```text
 端口：COM4
-波特率设置：115200
+波特率设置：921600（后续统一基线，详见文首警示块）
 LED 数：320
 Adalight 帧长度：966 字节
-分块大小：16 字节
-块间等待：3 ms
+分块大小：128 字节
+块间等待：1 ms
 亮灯续帧间隔：1 秒
+实测帧率：~80 FPS（bench_fps 扫描确认）
 ```
+
+> 历史基线（已废弃）：首版验证使用 115200 / 16 字节分块 / 3 ms 间隔，一帧约 180 ms、约 5.3 KB/s，只适合最小链路验证。正式发送器已统一到 921600 基线，不再回退。
 
 ## 当前硬件与固件基线
 
@@ -87,7 +98,7 @@ WLED-AP 的 BSSID 与芯片 MAC 连号，确认这个 AP 就是当前 ESP32-S3 �
 - 只连接原生 USB 一侧时，曾观察到 USB 反复重连且 WLED-AP 不出现。
 - 两个接口同时连接时，WLED 能稳定启动，并可通过 COM4 通信和发送 Adalight。
 
-原生 USB 单独连接无法稳定启动的根因仍未确定。它与本轮“完整 Adalight 帧一次性写入失败”是两个不同问题，不能混为一个根因。
+原生 USB 单独连接无法稳定启动的根因已实锤为供电裕量不足：两个 USB 口并联为板子供电，等效内阻减半，启动瞬间电流尖峰（flash 突发读取 + 射频校准）不再把 3.3V 拉低到 brownout 阈值以下。详见文末"供电与双 USB 口"章节。它与"完整 Adalight 帧一次性写入失败"是两个不同问题，不能混为一个根因。
 
 ## 固件恢复经验
 
@@ -121,7 +132,7 @@ app-only 文件不是完整 Flash 镜像。ESP32-S3 启动所需的 bootloader�
 在发送实时灯光数据之前，先证明以下事项：
 
 - COM4 是正确的数据端口。
-- 当前 WLED 串口波特率是 115200。
+- 当前 WLED 串口波特率是 921600（与 `config.SERIAL_BAUD` 一致；调试命令一律用 921600）。
 - 打开串口不会触发 ESP32-S3 复位。
 - WLED 可以同时接收文本命令并返回数据。
 
@@ -137,7 +148,7 @@ tests/test_probe_wled_serial.py
 ```python
 serial_port = serial.Serial()
 serial_port.port = "COM4"
-serial_port.baudrate = 115200
+serial_port.baudrate = 921600
 serial_port.dtr = False
 serial_port.rts = False
 serial_port.open()
@@ -149,10 +160,10 @@ serial_port.open()
 
 仓库中的 `tools/probe_serial.py` 是较早的诊断脚本，尚未采用这套安全打开顺序，不应作为当前串口探测基线。
 
-运行命令：
+运行命令（`--baud` 已默认取 `config.SERIAL_BAUD`，可省略）：
 
 ```powershell
-uv run python -m midi_visualize.serial_probe COM4 --baud 115200
+uv run python -m midi_visualize.serial_probe COM4 --baud 921600
 ```
 
 首次成功结果：
@@ -177,7 +188,7 @@ segment = 0..320
 WLED 16.0.1-dev 的 `Config -> Sync Interfaces -> Serial` 页面只显示波特率：
 
 ```text
-Baud rate: 115200
+Baud rate: 921600
 ```
 
 页面中没有单独的“启用 Adalight”或“Protocol = Adalight”选项。这不是配置缺失。
@@ -238,7 +249,7 @@ checksum = 0x01 XOR 0x3F XOR 0x55 = 0x6B
 - 共点亮 32 颗白灯。
 - 发送一次亮灯帧，等待 10 秒，再发送一次全黑帧。
 
-脚本固定使用 `COM4 @ 115200`，不读取当前仍为 921600 的 `config.SERIAL_BAUD`。
+脚本固定使用 `COM4 @ 115200`（历史值，已废弃；现读取 `config.SERIAL_BAUD`，即 921600）。
 
 ### 失败现象
 
@@ -267,14 +278,14 @@ checksum = 0x01 XOR 0x3F XOR 0x55 = 0x6B
 
 ### 1. 排除不存在的配置开关
 
-检查 WLED Sync setup 后确认 Serial 区域只有 `Baud rate: 115200`，没有协议选择或启用复选框。结合 WLED 官方串口文档和 `wled_serial.cpp` 源码，确认 Adalight 与文本命令共享解析器，不需要额外打开。
+检查 WLED Sync setup 后确认 Serial 区域只有 `Baud rate` 一项，没有协议选择或启用复选框。结合 WLED 官方串口文档和 `wled_serial.cpp` 源码，确认 Adalight 与文本命令共享解析器，不需要额外打开。
 
 ### 2. 失败后再次发送版本查询
 
 点灯失败后重新运行：
 
 ```powershell
-uv run python -m midi_visualize.serial_probe COM4 --baud 115200
+uv run python -m midi_visualize.serial_probe COM4 --baud 921600
 ```
 
 结果变为：
@@ -333,7 +344,7 @@ reply = b'WLED 2606301\r\n'
 
 ### 5. 同帧分块对照实验
 
-保持端口、115200 设置、帧内容和 LED 数完全不变，只改变写入节奏：
+保持端口、115200 设置（历史值）、帧内容和 LED 数完全不变，只改变写入节奏：
 
 ```text
 每块 16 字节
@@ -369,25 +380,27 @@ brightness = 128
 
 经验：诊断命令自身没有按预期执行时，它不是“失败证据”，只能作废并重跑。
 
-## 为什么 115200 仍然会突发过快
+## 为什么即使 921600 仍必须分块节流
 
-传统 UART 的 115200 bps 会自然限制线上每个字节的发送时间。在常见的 8N1 格式下，一个字节约占 10 bit，966 字节理论最短时间约为：
-
-```text
-966 * 10 / 115200 = 0.0839 秒
-```
-
-但 COM4 是 ESP32-S3 原生 USB CDC，不是 PC 通过 USB-UART 桥片连接到真实 UART RX。主机调用 `write(966 bytes)` 时，数据可以按 USB 包突发到设备。设置为 115200 并不保证 USB 总线按传统 UART 的 86.8 us/byte 物理节奏交付。
-
-WLED 侧必须依赖有限的 USB CDC 接收缓冲和主循环中的 `handleSerial()` 及时取走数据。受控实验表明，这个固件与硬件组合的一次性 966 字节发送路径不可靠，而 16 字节分块和 3 ms 间隔已经通过设备状态和目视验证。没有固件级计数器时，不进一步声称具体是哪一层发生了缓冲溢出。
-
-当前节流速度约为：
+传统 UART 的波特率会自然限制线上每个字节的发送时间。在常见的 8N1 格式下，一个字节约占 10 bit，966 字节在 921600 下的理论最短时间约为：
 
 ```text
-16 bytes / 3 ms ~= 5.3 KB/s
+966 * 10 / 921600 = 0.0105 秒
 ```
 
-考虑最后一块、`flush()` 和 Python 调度开销，一帧大约需要 180 ms 以上。该参数优先保证本轮 115200 最小验证可靠，不代表最终低延迟参数已经优化。
+但 COM4 是 ESP32-S3 原生 USB CDC，不是 PC 通过 USB-UART 桥片连接到真实 UART RX。主机调用 `write(966 bytes)` 时，数据可以按 USB 包突发到设备。设置波特率并不保证 USB 总线按传统 UART 的逐字节物理节奏交付。
+
+WLED 侧必须依赖有限的 USB CDC 接收缓冲和主循环中的 `handleSerial()` 及时取走数据。受控实验表明，这个固件与硬件组合的一次性 966 字节发送路径不可靠，而分块发送已经通过设备状态和目视验证。没有固件级计数器时，不进一步声称具体是哪一层发生了缓冲溢出。
+
+921600 基线下的实测节奏（`tools/bench_fps.py` 扫描确认）：
+
+```text
+128 bytes / 1 ms   →  ~80 FPS  ← 当前基线（SERIAL_CHUNK_SIZE / SERIAL_CHUNK_DELAY）
+192 bytes / 0 ms   →  解析器卡死（禁止）
+64 bytes / 1 ms    →  ~43 FPS（保守备选）
+```
+
+早期 115200 最小验证节流约为 5.3 KB/s、一帧 180 ms 以上，只保证链路可靠，不代表低延迟参数。921600 + 128/1ms 是可靠与延迟的平衡点。
 
 ## 最小脚本的最终修复
 
@@ -404,7 +417,7 @@ def write_frame(ser, frame, chunk_size=16, chunk_delay=0.003, sleep=time.sleep):
 
 最终行为：
 
-- 安全打开 `COM4 @ 115200`，在 `open()` 前关闭 DTR/RTS。
+- 安全打开 `COM4 @ 921600`（现读取 `config.SERIAL_BAUD`），在 `open()` 前关闭 DTR/RTS。
 - 使用分块节流发送亮灯帧。
 - 每 1 秒重新发送当前亮灯帧，直到满 10 秒。
 - 使用分块节流发送全黑帧。
@@ -445,12 +458,12 @@ uv run python tools/dot_test.py
 | 灯条、电源或 GPIO 完全不工作 | 排除；WLED Web UI 电源按钮能正常控制灯条 |
 | Python 脚本异常退出 | 排除；首版脚本完整运行，无 traceback 或串口写超时 |
 | COM4 端口选错 | 排除；COM4 能返回版本和 JSON，VID/PID 对应 ESP32-S3 原生 USB |
-| WLED 波特率不是 115200 | 排除；Sync 页面为 115200，版本和 JSON 均在该设置下成功 |
+| WLED 波特率不是 115200 | 排除；Sync 页面与 `config.SERIAL_BAUD` 一致（历史 115200 → 现 921600），版本和 JSON 均在该设置下成功 |
 | 需要在 Web UI 中额外启用 Adalight | 不成立；当前 WLED 页面无该开关，源码按输入头自动识别协议 |
 | Adalight 计数或校验错误 | 排除；帧格式与源码一致，同一帧分块后进入 Adalight realtime |
 | WLED 完全死机 | 排除；COM 仍枚举，补零后 `v` 恢复，Web 控制此前也正常 |
 | WLED 的 `on=false` 会阻止 realtime 显示 | 排除；设备进入 realtime，随后实机目视点亮成功 |
-| 必须先把波特率改成 921600 才能点亮 | 排除；115200 配合应用层节流已经完成端到端验证 |
+| 必须先把波特率改成 921600 才能点亮 | 排除；历史 115200 配合应用层节流已经完成端到端验证，正式基线仍统一为 921600 |
 
 ## 上游 WLED USB CDC 注意事项
 
@@ -474,16 +487,15 @@ WLED 上游 PR `wled/WLED#4792` 讨论了部分 ESP32-C3/S2/S3 原生 USB CDC �
 
 ### 启动前检查
 
-1. 同时连接当前板上的两个 USB 物理接口。
+1. 同时连接当前板上的两个 USB 物理接口（供电要求，见文末"供电与双 USB 口"章节）。
 2. 确认灯条 5V 电源开启，ESP32-S3 与灯条共地。
 3. 确认没有串口监视器、Web Installer 或其他程序占用 COM4。
-4. 确认 WLED Serial baud rate 仍为 115200。
-5. 不要直接运行当前正式 MIDI 主程序，因为其串口实现尚未迁移本轮修复。
+4. 确认 WLED Serial baud rate 与 `config.SERIAL_BAUD` 一致（**921600**）。
 
 ### 基础串口探测
 
 ```powershell
-uv run python -m midi_visualize.serial_probe COM4 --baud 115200
+uv run python -m midi_visualize.serial_probe COM4 --baud 921600
 ```
 
 期望至少看到：
@@ -507,70 +519,84 @@ uv run python tools/dot_test.py
 2. 优先重启 WLED，使串口状态机回到初始状态。
 3. 重启后先运行只读 probe，不要立即重复一次性整帧写入。
 4. 若正在做协议诊断，可以用足量零字节补齐可能的未完成帧，再查询 `v`；不要把它做成正式恢复机制。
-5. 确认发送路径仍使用 16 字节分块和 3 ms 间隔。
+5. 确认发送路径使用 128 字节分块和 1 ms 间隔（`SERIAL_CHUNK_SIZE` / `SERIAL_CHUNK_DELAY`）。
 
-## 尚未完成的工作
+## 已完成（历史章节，保留供追溯）
 
-### 正式 `SerialSender` 仍不安全
+### 正式 `SerialSender` 已迁移
 
-`src/midi_visualize/adalight.py` 当前仍有两项与本轮已验证基线不一致：
+`src/midi_visualize/adalight.py` 已与验证基线对齐：
 
-- 直接调用 `serial.Serial(...)` 打开端口，没有保证 DTR/RTS 在 `open()` 前为非激活。
-- `flush()` 仍通过单次 `self._ser.write(build_frame(...))` 发送完整帧，没有分块节流。
+- `open_serial_without_reset()` 保证 DTR/RTS 在 `open()` 前为非激活。
+- `flush()` 通过 `write_frame()` 按 128 字节分块、1 ms 间隔发送，并有串口写锁覆盖整帧。
+- `tools/dot_test.py` 的经验已外推到 `midi_visualize.main`、`calibrate`、`locate`。
 
-因此，`tools/dot_test.py` 的成功不能外推为 `midi_visualize.main`、`calibrate` 或 `locate` 已经可以安全使用串口。
-
-### 波特率配置仍不一致
-
-WLED 当前实际值：
+### 波特率配置已统一
 
 ```text
-115200
+WLED Sync Interfaces → Baud rate：921600
+config.SERIAL_BAUD：921600
 ```
 
-`src/midi_visualize/config.py` 当前值：
+所有工具默认读取 `config.SERIAL_BAUD`（`serial_probe`、`wled_json`、`capture_boot`、`dot_test`），不再有硬编码旧波特率。CH340 端口注释已同步为 `COM5`。
 
-```python
-SERIAL_BAUD = 921600
-```
+### 性能已达标
 
-最小脚本固定使用 115200，因此本轮验证不受该差异影响。正式程序运行前必须统一两侧配置。
+921600 / 128 字节分块 / 1 ms 间隔实测约 80 FPS（`tools/bench_fps.py`），满足高密度 MIDI 事件需求。应用层的有界分块和写串行化仍然保留，不依赖 USB CDC 自动节流。
 
-该文件关于 CH340 端口的注释仍写着旧的 `COM3`，当前实际枚举是 `COM5`，也需要在正式迁移时同步。
+### 并发写入已串行化
 
-### 性能仍未达到 MIDI 实时目标
+`SerialSender` 内部 `_write_lock` 覆盖整帧所有块的串口写过程，与 `_lock`（内存快照）分离，防止 MIDI 事件发送与 realtime keepalive 的分块交错成损坏帧。
 
-当前可靠参数发送一帧约需 180 ms，适合硬件通路验证，不适合高密度 MIDI note 事件。即使按传统 115200 线速计算，966 字节也至少需要约 84 ms，只能达到约 12 FPS。
+### 校准已完成
 
-后续提高到 921600 时仍应保留应用层的有界分块和写串行化，不能假设原生 USB CDC 会自动按波特率节流。需要重新实测块大小、块间隔、持续帧率和事件延迟。
+- `LED_OFFSET = 97`（`locate` 实测）。
+- `KEYBOARD_LED_COUNT = 196`（含 LED_OFFSET，`calibrate ends` 验证）。
+- `REVERSED = False` 实测。
+- 原 `LEDS_PER_KEY` 方案已废弃，改为固定 3 LED/键窗口映射。
 
-### 并发写入必须串行化
-
-正式程序可能同时有 MIDI 事件发送和 realtime keepalive。一个 Adalight 帧的所有块必须作为不可交错的整体写入，否则两个线程的分块会混成一个损坏帧。
-
-现有帧数据锁只保护内存快照，不等于保护完整串口写过程。正式迁移时需要专门的串口写锁覆盖整帧的所有块。
-
-### 仍待校准
-
-- `LED_OFFSET` 尚未通过 `locate` 实测。
-- `REVERSED` 尚未实测。
-- `LEDS_PER_KEY=2.22` 尚未完成 A0 到 C8 的整体校准。
-- 原生 USB 单接口反复重连、AP 不出现的启动问题尚未定位。
-
-## 后续实现验收标准
+## 后续实现验收标准（历史基线，已完成）
 
 将本轮经验迁移到正式发送器时，至少应满足：
 
 - DTR/RTS 在串口 `open()` 前设为非激活。
-- WLED 与程序波特率完全一致。
+- WLED 与程序波特率完全一致（921600）。
 - 320 颗的 966 字节帧使用经过实机验证的有界分块发送。
 - 同一帧的所有块不可被其他线程或其他帧交错。
 - 写超时必须显式报告，不能静默吞掉后继续声称已发送。
-- realtime keepalive 小于 WLED timeout，同时避免不必要地占满 115200 带宽。
+- realtime keepalive 小于 WLED timeout，同时避免不必要地占满串口带宽。
 - 发送亮灯帧后能通过 JSON 看到 `live=true` 和 `lm="USB Adalight/TPM2"`。
 - 发送结束后能立即显示全黑帧。
 - 实机连续弹奏时不出现解析器卡帧、灯冻结、USB 重连或帧积压。
 - 自动化测试通过，并完成真实灯条目视验收。
+
+以上均已满足：自动化测试 87 passed，实机全流程 MIDI 弹奏验证通过。
+
+## 供电与双 USB 口（重连根因）
+
+### 现象
+
+- 只插原生 USB（COM4）单口时，按 RST 复位或首次插电后，Windows 反复枚举设备（实测 60 秒内 19 次），每次枚举输出 `Ada` 后 0.5~8 秒随机掉线。
+- 板子未连接灯带、空载时同样复现，排除灯带干扰。
+- 双口同插后不再反复重连。
+
+### 结论
+
+芯片级复位循环，根因是单口 USB 供电裕量不足：
+
+- 启动瞬间电流峰值最大（flash 突发读取 + 射频校准），WiFi 配置为 AP-only 时可排除 WiFi 重试因素。
+- 两个 USB 口并联为板子供电，等效内阻减半，压降不再把 3.3V 拉低到 brownout 阈值以下。
+- "经常但不总是"是临界裕量的典型特征；稳定后偶尔重连是外部扰动（如灯带地弹）推过阈值。
+
+### 排查工具
+
+`tools/capture_boot.py`：跨枚举重连捕获启动日志（断线自动重开端口，统计枚举次数）。
+`tools/wled_json.py`：跨枚举重试发送 JSON API 命令（先等 WLED 打印 `Ada` 再发送）。
+
+### 永久方案
+
+- 当前可靠基线：两个 USB 口同时连接。
+- 长期最优：从灯带 6A 电源引 5V 到板子 5V 引脚，彻底脱离 USB 供电。
 
 ## 核心经验
 
@@ -581,3 +607,4 @@ SERIAL_BAUD = 921600
 5. 每次实验只改变一个变量。本轮关键对照只改变了写入节奏，帧内容完全相同。
 6. 先验证最小、低风险图案，再接 MIDI、提高波特率和优化延迟。
 7. 保留已解决问题与未决问题的边界，不用分块修复解释原生 USB 单独启动异常。
+8. 双 USB 口是供电并联而非冗余：等效内阻减半解释了单口重连、双口稳定的差异。

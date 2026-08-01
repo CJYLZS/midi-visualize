@@ -4,7 +4,7 @@
     uv run python tools/dot_test.py
 
 前提：
-    - WLED 串口波特率为 115200（重装后默认值）
+    - WLED 串口波特率为 921600（与 config.SERIAL_BAUD 一致）
     - COM4 为 ESP32-S3 原生 USB CDC 口
     - 两个 USB 口均已连接（CH340 侧供电，原生 USB 侧通信）
 """
@@ -21,15 +21,18 @@ from midi_visualize.adalight import (  # noqa: E402
     open_serial_without_reset as open_safe,
     write_frame,
 )
+from midi_visualize import config  # noqa: E402
 
 PORT  = "COM4"
-BAUD  = 115200
-COUNT = 320      # WLED 声明的 LED 总数
+BAUD  = config.SERIAL_BAUD
+COUNT = config.LED_COUNT
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 STEP  = 10       # 每隔几颗点一颗
 HOLD  = 10.0     # 亮灯持续秒数
 REFRESH = 1.0    # 在 WLED realtime 超时前续帧
+CHUNK_SIZE = config.SERIAL_CHUNK_SIZE
+CHUNK_DELAY = config.SERIAL_CHUNK_DELAY
 
 
 def make_frame(lit: bool) -> bytes:
@@ -46,7 +49,7 @@ def main() -> None:
     print(f"打开 {PORT} @ {BAUD} bps ...")
     with open_safe(PORT, BAUD) as ser:
         print(f"发送亮灯帧：{lit_count} 颗白灯（索引 0, 10, 20, ...）")
-        write_frame(ser, lit_frame, chunk_size=16, chunk_delay=0.003)
+        write_frame(ser, lit_frame, chunk_size=CHUNK_SIZE, chunk_delay=CHUNK_DELAY)
 
         print(f"等待 {HOLD:.0f} 秒 ...")
         deadline = time.monotonic() + HOLD
@@ -55,11 +58,11 @@ def main() -> None:
             now = time.monotonic()
             time.sleep(min(next_refresh - now, deadline - now))
             if time.monotonic() < deadline:
-                write_frame(ser, lit_frame, chunk_size=16, chunk_delay=0.003)
+                write_frame(ser, lit_frame, chunk_size=CHUNK_SIZE, chunk_delay=CHUNK_DELAY)
                 next_refresh = time.monotonic() + REFRESH
 
         print("发送全灭帧 ...")
-        write_frame(ser, off_frame, chunk_size=16, chunk_delay=0.003)
+        write_frame(ser, off_frame, chunk_size=CHUNK_SIZE, chunk_delay=CHUNK_DELAY)
 
     print("完成。")
 

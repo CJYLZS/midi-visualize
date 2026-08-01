@@ -17,9 +17,10 @@ Adalight 帧格式：
     R G B × N            像素数据，全量
 
 带宽核算（320 颗 = 966 字节/帧）：
-    115200  bps →  11.5 KB/s →  12 FPS   ← WLED 默认值，不够用
-    921600  bps →  92   KB/s →  95 FPS   ← 需在 WLED Sync 设置里改成这个
+    115200  bps →  11.5 KB/s →  12 FPS   ← WLED 默认值，不够用，勿用
+    921600  bps →  92   KB/s →  95 FPS   ← 当前基线，需在 WLED Sync 设置里改一致
     1500000 bps → 150   KB/s → 155 FPS   ← CH340 桥片可能不稳
+实测（921600 + 128 字节分块 / 1 ms）：约 80 FPS
 """
 
 import threading

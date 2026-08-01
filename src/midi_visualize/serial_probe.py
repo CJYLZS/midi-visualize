@@ -6,6 +6,7 @@ import time
 
 import serial
 
+from . import config
 from .adalight import open_serial_without_reset
 
 
@@ -33,7 +34,7 @@ def read_reply(serial_port, payload, timeout=3.0):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("port", nargs="?", default="COM4")
-    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--baud", type=int, default=config.SERIAL_BAUD)
     args = parser.parse_args()
 
     print(f"Opening {args.port} at {args.baud} baud without DTR/RTS reset")

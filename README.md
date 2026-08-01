@@ -5,10 +5,11 @@
 ## 硬件接线
 
 - 电钢通过 USB 连接电脑，提供 MIDI 输入。
-- ESP32-S3 两个 USB 口都要接电脑：
+- ESP32-S3 两个 USB 口**都要接电脑**（供电并联，缺一口会反复重连）：
   - **COM4**（原生 USB，VID_303A）：WLED 串口数据，Adalight 实时数据走这里。
   - **COM5**（CH340，VID_1A86）：供电；没有接 UART0 数据线，串口命令无响应。
 - 灯条数据线接 ESP32-S3 GPIO16（470Ω 串联电阻），灯条独立 5V 6A 供电，与板子共地。
+- 只插 COM4 单口时板子会因供电裕量不足反复重连（按 RST 或首次插电后最明显），**必须双口同插**。长期最稳方案是从灯带 6A 电源引 5V 到板子 5V 引脚，彻底脱离 USB 供电。
 
 ## 安装
 
@@ -114,7 +115,7 @@ uv run python tools/dot_test.py
 | 参数 | 说明 |
 |---|---|
 | `TRANSPORT` | `"serial"` = 串口 Adalight（推荐）；`"udp"` = WiFi UDP DNRGB（该网络实测抖动大） |
-| `SERIAL_PORT` / `SERIAL_BAUD` | 串口名 / 波特率（必须与 WLED Sync 设置一致，921600） |
+| `SERIAL_PORT` / `SERIAL_BAUD` | 串口名 / 波特率（**必须与 WLED Sync 设置一致，921600**；调低会显著增加帧延迟） |
 | `SERIAL_CHUNK_SIZE` / `SERIAL_CHUNK_DELAY` | 分块大小 / 块间间隔，防止原生 USB CDC 突发丢字节 |
 | `LED_COUNT` | WLED 灯条总 LED 数（320） |
 | `LED_OFFSET` | A0 左边缘 LED 索引 |
@@ -123,6 +124,13 @@ uv run python tools/dot_test.py
 | `COLOR_WHITE_KEY` / `COLOR_BLACK_KEY` | 键色（当前统一白色） |
 | `COLOR_MODE` | 默认颜色模式：`white` / `rainbow` / `hue`（可用 `--mode` 覆盖） |
 | `VELOCITY_TO_BRIGHTNESS` / `MIN_BRIGHTNESS` | 力度映射亮度（1~127 → 30%~100%） |
+
+### 波特率与延迟
+
+- 320 颗灯 = 966 字节/帧，**波特率直接决定帧延迟下限**：921600 实测 ~80 FPS（约 12.5ms/帧），115200 只有 ~12 FPS（约 83ms/帧），肉眼可见卡顿。
+- **必须把 WLED 的 `Config → Sync Interfaces → Serial → Baud rate` 也改成 921600**，否则 WLED 解析器按错误的线速消费数据，会丢帧或卡死。
+- 改波特率后不要回退分块节流：`SERIAL_CHUNK_SIZE=128`、`SERIAL_CHUNK_DELAY=0.001` 是实测平衡点（128/1ms 约 80 FPS；192/0ms 会让 WLED 解析器卡死）。
+- 探测工具（`serial_probe`、`wled_json`、`capture_boot`、`dot_test`）的默认波特率都读 `config.SERIAL_BAUD`，无需手动指定。
 
 ## 颜色模式
 

@@ -14,8 +14,10 @@ import time
 
 import serial
 
-PORT = sys.argv[1] if len(sys.argv) > 1 else "COM3"
-BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 115200
+from midi_visualize import config
+
+PORT = sys.argv[1] if len(sys.argv) > 1 else "COM4"
+BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else config.SERIAL_BAUD
 
 ser = serial.Serial(PORT, BAUD, timeout=1, write_timeout=2)
 print(f"打开 {PORT} @ {BAUD}")
