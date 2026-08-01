@@ -9,9 +9,9 @@ TRANSPORT = "serial"
 SERIAL_PORT = "COM4"   # ESP32-S3 原生 USB (VID_303A) 的 CDC 口。
                         # 注意：双口板上的 CH340 口(COM5) 没有 WLED 串口响应，
                         # 没接 UART0 数据线，串口命令完全无响应。必须用原生 USB 口。
-SERIAL_BAUD = 115200   # 必须与 WLED 的 Sync Interfaces → Baud Rate 一致。
-SERIAL_CHUNK_SIZE = 16
-SERIAL_CHUNK_DELAY = 0.003
+SERIAL_BAUD = 921600   # 必须与 WLED 的 Sync Interfaces → Baud Rate 一致。
+SERIAL_CHUNK_SIZE = 128
+SERIAL_CHUNK_DELAY = 0.001
 SERIAL_KEEPALIVE = 1.0
 
 # --- WiFi（TRANSPORT = "udp" 时才用到）---
@@ -20,10 +20,10 @@ WLED_PORT = 21324           # WLED UDP realtime 默认端口
 
 # --- 灯条几何 ---
 LED_COUNT = 320       # WLED 里声明的 LED 数（须与 WLED 设置一致）
-                      # 全条 2m × 160/m。键盘只用其中约 195 颗，
+                      # 全条 2m × 160/m。键盘只用其中一部分，
                       # 剩下的留作以后扩展。用 DNRGB 协议才能寻址 >255。
-LEDS_PER_KEY = 2.22   # 160 LED/m × 1.22m / 88 键；实测微调
-LED_OFFSET = 0        # 第一个键对应的起始 LED 索引
+LED_OFFSET = 97       # 最低音 A0 左边缘对应的 LED 索引
+KEYBOARD_LED_COUNT = 196  # 琴键覆盖的 LED 数，包含 LED_OFFSET
 REVERSED = False      # 灯条方向：True 表示数据线在琴的右侧
 
 # --- 键盘 ---
@@ -31,8 +31,8 @@ FIRST_NOTE = 21   # A0
 KEY_COUNT = 88    # 到 C8 (108)
 
 # --- 配色 (R, G, B) ---
-COLOR_WHITE_KEY = (0, 120, 255)   # 白键：蓝
-COLOR_BLACK_KEY = (255, 60, 0)    # 黑键：橙
+COLOR_WHITE_KEY = (255, 255, 255)   # 所有键统一白色
+COLOR_BLACK_KEY = (255, 255, 255)
 
 # --- 力度 ---
 VELOCITY_TO_BRIGHTNESS = True

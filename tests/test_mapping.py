@@ -35,10 +35,10 @@ class TestNoteToLeds:
         assert leds
         assert min(leds) == config.LED_OFFSET
 
-    def test_highest_key_within_strip(self):
+    def test_highest_key_reaches_calibrated_end(self):
         leds = mapping.note_to_leds(108)
         assert leds
-        assert max(leds) < config.LED_COUNT
+        assert max(leds) == config.LED_OFFSET + config.KEYBOARD_LED_COUNT - 1
 
     def test_below_range_returns_empty(self):
         assert mapping.note_to_leds(20) == []
@@ -50,10 +50,21 @@ class TestNoteToLeds:
         for note in range(21, 109):
             assert mapping.note_to_leds(note), f"note {note} got no LED"
 
-    def test_all_indices_within_strip(self):
+    def test_all_indices_within_calibrated_keyboard_span(self):
+        first = config.LED_OFFSET
+        last = first + config.KEYBOARD_LED_COUNT - 1
         for note in range(21, 109):
             for led in mapping.note_to_leds(note):
-                assert 0 <= led < config.LED_COUNT
+                assert first <= led <= last
+
+    def test_reversed_mapping_mirrors_across_full_strip(self, monkeypatch):
+        monkeypatch.setattr(config, "REVERSED", False)
+        forward = mapping.note_to_leds(21)
+        monkeypatch.setattr(config, "REVERSED", True)
+
+        assert mapping.note_to_leds(21) == [
+            config.LED_COUNT - 1 - led for led in forward
+        ]
 
     def test_mapping_is_monotonic(self):
         """音高递增，LED 索引不应倒退。黑白键宽度差异允许重叠，但不允许反向。"""
@@ -63,11 +74,14 @@ class TestNoteToLeds:
             assert min(leds) >= prev_start, f"note {note} went backwards"
             prev_start = min(leds)
 
-    def test_white_keys_get_more_leds_than_black(self):
-        """同一区域内白键应比黑键宽。"""
-        white = len(mapping.note_to_leds(60))  # C4
-        black = len(mapping.note_to_leds(61))  # C#4
-        assert white > black
+    def test_every_key_gets_at_least_three_leds(self):
+        """每个键至少点亮 3 颗灯。"""
+        for note in range(21, 109):
+            assert len(mapping.note_to_leds(note)) >= 3, f"note {note}"
+
+    def test_black_and_white_keys_same_width(self):
+        """映射不再区分黑白键，宽度一致。"""
+        assert len(mapping.note_to_leds(60)) == len(mapping.note_to_leds(61))
 
     def test_coverage_is_reasonable(self):
         """88 键覆盖的 LED 总数应接近预期的 195 颗。"""
@@ -79,8 +93,8 @@ class TestNoteToLeds:
 
 
 class TestVelocityColor:
-    def test_black_and_white_differ(self):
-        assert mapping.note_to_color(60, 127) != mapping.note_to_color(61, 127)
+    def test_black_and_white_same_white(self):
+        assert mapping.note_to_color(60, 127) == mapping.note_to_color(61, 127) == (255, 255, 255)
 
     def test_max_velocity_gives_base_color(self):
         assert mapping.note_to_color(60, 127) == config.COLOR_WHITE_KEY

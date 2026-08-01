@@ -9,8 +9,7 @@
 校准顺序:
     1. ping  —— 确认能通。不亮时检查串口、WLED 和灯条供电。
     2. ends  —— 调 config.LED_OFFSET 让 A0 对准第一个键。
-    3. ends  —— 调 config.LEDS_PER_KEY 让 C8 对准最后一个键。
-                偏右就调小，偏左就调大，调整量 ≈ 偏移颗数 / 88。
+    3. ends  —— 调 config.KEYBOARD_LED_COUNT 让 C8 对准最后一个键。
     4. sweep —— 整体验收。
 """
 
@@ -39,10 +38,15 @@ def cmd_ends(sender) -> None:
     )
     print(f"绿 = A0 → LED {low}")
     print(f"红 = C8 → LED {high}")
-    print(f"当前参数: LEDS_PER_KEY={config.LEDS_PER_KEY}  LED_OFFSET={config.LED_OFFSET}")
+    last = config.LED_OFFSET + config.KEYBOARD_LED_COUNT - 1
+    print(
+        f"当前参数: LED_OFFSET={config.LED_OFFSET}  "
+        f"KEYBOARD_LED_COUNT={config.KEYBOARD_LED_COUNT}  "
+        f"范围 LED {config.LED_OFFSET}..{last}"
+    )
     print()
     print("绿灯没对准最低音键 → 调 LED_OFFSET")
-    print("红灯没对准最高音键 → 调 LEDS_PER_KEY（偏右调小，偏左调大）")
+    print("红灯没对准最高音键 → 调 KEYBOARD_LED_COUNT")
 
 
 def cmd_sweep(sender, delay: float) -> None:
