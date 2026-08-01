@@ -101,9 +101,10 @@ def run(
     writer_factory=LatestFrameWriter,
     open_input=mido.open_input,
     poll_interval: float = 0.1,
+    color_mapper=mapping.note_to_color,
 ) -> None:
     """Receive MIDI in callbacks while one worker sends only the latest frame."""
-    state = MidiLightState()
+    state = MidiLightState(color_mapper=color_mapper)
     writer = writer_factory(sender, keepalive=config.SERIAL_KEEPALIVE)
     writer.start()
     try:
@@ -122,6 +123,12 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="列出 MIDI 输入口后退出")
     parser.add_argument("--port", help="MIDI 输入口名称（支持部分匹配）")
     parser.add_argument("--ip", help=f"WLED IP，默认 {config.ESP32_IP}")
+    parser.add_argument(
+        "--mode",
+        choices=mapping.COLOR_MODES,
+        default=config.COLOR_MODE,
+        help="颜色模式（默认按配置）",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -129,6 +136,7 @@ def main() -> None:
         return
 
     port_name = pick_port(args.port)
+    color_mapper = mapping.COLOR_MODES[args.mode]
 
     # SIGINT 交给 KeyboardInterrupt 处理，确保 context manager 的 all_off 能跑到
     signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -139,7 +147,7 @@ def main() -> None:
         if not sender.prepare():
             print("警告：设备准备失败，灯可能不响应。")
         try:
-            run(port_name, sender)
+            run(port_name, sender, color_mapper=color_mapper)
         except KeyboardInterrupt:
             print("\n退出，熄灭所有灯。")
         sender.all_off()

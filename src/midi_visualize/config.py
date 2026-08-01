@@ -33,6 +33,7 @@ KEY_COUNT = 88    # 到 C8 (108)
 # --- 配色 (R, G, B) ---
 COLOR_WHITE_KEY = (255, 255, 255)   # 所有键统一白色
 COLOR_BLACK_KEY = (255, 255, 255)
+COLOR_MODE = "white"   # 默认颜色模式：white / rainbow / hue（可用 --mode 覆盖）
 
 # --- 力度 ---
 VELOCITY_TO_BRIGHTNESS = True

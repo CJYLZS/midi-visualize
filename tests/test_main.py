@@ -146,3 +146,65 @@ def test_run_uses_callback_writer_and_propagates_transport_failure():
             for led in main.mapping.note_to_leds(60)
         ]
     ]
+
+
+class OneShotWriter(RecordingWriter):
+    def start(self):
+        pass
+
+    def wait_for_failure(self, _timeout):
+        return True
+
+    def raise_if_failed(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+def test_run_uses_selected_color_mode():
+    writer = OneShotWriter()
+
+    def open_input(port_name, callback):
+        return CallbackInput(callback)
+
+    main.run(
+        "CLP-785",
+        object(),
+        writer_factory=lambda _sender, keepalive: writer,
+        open_input=open_input,
+        poll_interval=0.01,
+        color_mapper=main.mapping.COLOR_MODES["rainbow"],
+    )
+
+    assert writer.frames[-1] == [
+        (led, main.mapping.note_to_color_rainbow(60, 90))
+        for led in main.mapping.note_to_leds(60)
+    ]
+
+
+class DummySender:
+    def prepare(self):
+        return True
+
+    def all_off(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_main_cli_mode_reaches_color_mapper(monkeypatch):
+    chosen = {}
+
+    def fake_run(port_name, sender, color_mapper=None):
+        chosen["mapper"] = color_mapper
+
+    monkeypatch.setattr(main, "make_sender", lambda ip=None: DummySender())
+    monkeypatch.setattr(main, "pick_port", lambda requested: "port")
+    monkeypatch.setattr(main, "run", fake_run)
+    monkeypatch.setattr(main.sys, "argv", ["main", "--mode", "rainbow"])
+
+    main.main()
+
+    assert chosen["mapper"] is main.mapping.COLOR_MODES["rainbow"]

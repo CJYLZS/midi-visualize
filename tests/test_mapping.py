@@ -111,6 +111,87 @@ class TestVelocityColor:
                 assert 0 <= c <= 255
 
 
+class TestHsvToRgb:
+    def test_red_at_zero(self):
+        assert mapping.hsv_to_rgb(0, 1.0, 1.0) == (255, 0, 0)
+
+    def test_green_at_120(self):
+        assert mapping.hsv_to_rgb(120, 1.0, 1.0) == (0, 255, 0)
+
+    def test_blue_at_240(self):
+        assert mapping.hsv_to_rgb(240, 1.0, 1.0) == (0, 0, 255)
+
+    def test_value_scales_all_channels(self):
+        assert mapping.hsv_to_rgb(0, 1.0, 0.5) == (128, 0, 0)
+
+    def test_white_at_zero_saturation(self):
+        assert mapping.hsv_to_rgb(123, 0.0, 1.0) == (255, 255, 255)
+
+    def test_hue_wraps_above_360(self):
+        assert mapping.hsv_to_rgb(360, 1.0, 1.0) == mapping.hsv_to_rgb(0, 1.0, 1.0)
+
+    def test_always_valid_rgb_range(self):
+        for h in range(0, 360, 30):
+            for s in (0.0, 0.5, 1.0):
+                for c in mapping.hsv_to_rgb(h, s, 0.7):
+                    assert 0 <= c <= 255
+
+
+class TestRainbowMode:
+    def test_same_octave_same_color(self):
+        assert mapping.note_to_color_rainbow(60, 100) == mapping.note_to_color_rainbow(61, 100)
+
+    def test_adjacent_octaves_differ(self):
+        assert mapping.note_to_color_rainbow(60, 100) != mapping.note_to_color_rainbow(72, 100)
+
+    def test_covers_each_octave(self):
+        colors = {mapping.note_to_color_rainbow(n, 100) for n in range(21, 109)}
+        assert len(colors) >= 7
+
+    def test_all_channels_valid(self):
+        for note in (21, 60, 108):
+            for c in mapping.note_to_color_rainbow(note, 127):
+                assert 0 <= c <= 255
+
+    def test_velocity_still_dims(self):
+        soft = sum(mapping.note_to_color_rainbow(60, 1))
+        loud = sum(mapping.note_to_color_rainbow(60, 127))
+        assert loud > soft
+
+
+class TestHueMode:
+    def test_same_pitch_class_same_color(self):
+        assert mapping.note_to_color_hue(60, 100) == mapping.note_to_color_hue(72, 100)
+
+    def test_adjacent_semitones_differ_by_30_degrees(self):
+        a = mapping.hsv_to_rgb(60 * 30, 1.0, 1.0)
+        b = mapping.hsv_to_rgb(61 * 30, 1.0, 1.0)
+        assert mapping.note_to_color_hue(60, 127) == a
+        assert mapping.note_to_color_hue(61, 127) == b
+
+    def test_all_twelve_pitch_classes_distinct(self):
+        colors = {mapping.note_to_color_hue(n, 100) for n in range(60, 72)}
+        assert len(colors) == 12
+
+    def test_velocity_still_dims(self):
+        soft = sum(mapping.note_to_color_hue(60, 1))
+        loud = sum(mapping.note_to_color_hue(60, 127))
+        assert loud > soft
+
+
+class TestColorModes:
+    def test_registry_has_all_three_modes(self):
+        assert set(mapping.COLOR_MODES) == {"white", "rainbow", "hue"}
+
+    def test_registry_maps_to_callables(self):
+        for name, fn in mapping.COLOR_MODES.items():
+            assert callable(fn)
+            assert len(fn(60, 100)) == 3
+
+    def test_white_mode_is_default_registered_color(self):
+        assert mapping.COLOR_MODES["white"] is mapping.note_to_color
+
+
 class TestDnrgbPacket:
     def test_header(self):
         pkt = warls.build_packet(0, [(1, 2, 3)])

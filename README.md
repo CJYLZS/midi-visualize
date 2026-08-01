@@ -24,6 +24,9 @@ uv run python -m midi_visualize.main --list
 
 # 2. 指定端口启动（支持部分匹配）
 uv run python -m midi_visualize.main --port "Clavinova"
+
+# 3. 指定颜色模式（white / rainbow / hue，默认 white）
+uv run python -m midi_visualize.main --port "Clavinova" --mode rainbow
 ```
 
 Ctrl+C 退出，程序会自动熄灭所有灯。
@@ -118,7 +121,18 @@ uv run python tools/dot_test.py
 | `KEYBOARD_LED_COUNT` | 琴键覆盖 LED 数（含 LED_OFFSET） |
 | `REVERSED` | 灯条反向（数据线在琴右侧时设 True） |
 | `COLOR_WHITE_KEY` / `COLOR_BLACK_KEY` | 键色（当前统一白色） |
+| `COLOR_MODE` | 默认颜色模式：`white` / `rainbow` / `hue`（可用 `--mode` 覆盖） |
 | `VELOCITY_TO_BRIGHTNESS` / `MIN_BRIGHTNESS` | 力度映射亮度（1~127 → 30%~100%） |
+
+## 颜色模式
+
+| 模式 | 说明 |
+|---|---|
+| `white`（默认） | 所有键统一白色，力度调亮度 |
+| `rainbow` | 八度彩虹：每个八度一个颜色，88 键共 7 色，反映音域位置 |
+| `hue` | 音高色相环：12 音高各占 30° 色相，同名音同色，能看出和弦构成 |
+
+三种模式都保留力度调亮度。启动时用 `--mode rainbow` 选择，或改 `config.py` 的 `COLOR_MODE` 作为默认。
 
 ## 映射算法
 
