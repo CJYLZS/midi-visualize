@@ -1,13 +1,13 @@
 """校准工具。硬件到货后按顺序用这几个命令。
 
-    uv run python -m midi_visualize.calibrate ping        点亮第 0 颗灯（验证 UDP 通路）
+    uv run python -m midi_visualize.calibrate ping        点亮第 0 颗灯（验证当前传输通路）
     uv run python -m midi_visualize.calibrate ends        只点亮 A0 和 C8（校准两端）
     uv run python -m midi_visualize.calibrate sweep       逐键扫描（看整体对齐）
     uv run python -m midi_visualize.calibrate all         全部点亮（看覆盖范围）
     uv run python -m midi_visualize.calibrate off         全部熄灭
 
 校准顺序:
-    1. ping  —— 确认能通。不亮就是 IP 错了或 WLED 没开 realtime 接收。
+    1. ping  —— 确认能通。不亮时检查串口、WLED 和灯条供电。
     2. ends  —— 调 config.LED_OFFSET 让 A0 对准第一个键。
     3. ends  —— 调 config.LEDS_PER_KEY 让 C8 对准最后一个键。
                 偏右就调小，偏左就调大，调整量 ≈ 偏移颗数 / 88。
@@ -27,7 +27,7 @@ _BLUE = (0, 80, 255)
 
 def cmd_ping(sender) -> None:
     print(f"点亮 LED 0 为红色，其余全灭。目标 {describe()}")
-    print("如果没反应，检查：WLED 电源是否开启(on)、亮度是否够、realtime override 是否允许。")
+    print("如果没反应，检查 COM4、两个 USB 连接、WLED 状态和灯条供电。")
     sender.send_exclusive([(0, _RED)])
 
 

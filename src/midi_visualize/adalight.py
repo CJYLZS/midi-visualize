@@ -35,6 +35,68 @@ Color = tuple[int, int, int]
 _BLACK: Color = (0, 0, 0)
 
 
+class WledConnectionError(RuntimeError):
+    """The serial endpoint did not identify itself as WLED."""
+
+
+class FrameWriteError(RuntimeError):
+    """A partial frame may have left WLED waiting for more pixel data."""
+
+
+def open_serial_without_reset(
+    port: str,
+    baudrate: int,
+    serial_factory=serial.Serial,
+):
+    """Open a serial port with CDC control lines inactive from the start."""
+    serial_port = serial_factory()
+    serial_port.port = port
+    serial_port.baudrate = baudrate
+    serial_port.timeout = 0.1
+    serial_port.write_timeout = 0.5
+    serial_port.dtr = False
+    serial_port.rts = False
+    serial_port.open()
+    return serial_port
+
+
+def write_frame(
+    serial_port,
+    frame: bytes,
+    chunk_size: int,
+    chunk_delay: float,
+    sleep=time.sleep,
+) -> None:
+    """Write one complete frame in paced chunks."""
+    for offset in range(0, len(frame), chunk_size):
+        chunk = frame[offset : offset + chunk_size]
+        written = serial_port.write(chunk)
+        if written != len(chunk):
+            raise serial.SerialTimeoutException(
+                f"serial short write: {written}/{len(chunk)} bytes"
+            )
+        serial_port.flush()
+        if offset + chunk_size < len(frame):
+            sleep(chunk_delay)
+
+
+def read_wled_version(serial_port, timeout: float = 3.0) -> bytes:
+    """Return WLED's version reply from an already-open serial connection."""
+    serial_port.reset_input_buffer()
+    written = serial_port.write(b"v")
+    if written != 1:
+        raise serial.SerialTimeoutException(f"serial short write: {written}/1 bytes")
+    serial_port.flush()
+
+    reply = bytearray()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        reply.extend(serial_port.read(4096))
+        if reply.startswith(b"WLED"):
+            return bytes(reply)
+    return bytes(reply)
+
+
 def build_frame(colors: list[Color]) -> bytes:
     """组装一个完整的 Adalight 帧。"""
     n = len(colors) - 1
@@ -57,20 +119,42 @@ class SerialSender:
         port: str | None = None,
         baudrate: int | None = None,
         led_count: int | None = None,
+        serial_factory=serial.Serial,
+        probe_timeout: float = 3.0,
+        chunk_size: int | None = None,
+        chunk_delay: float | None = None,
+        sleep=time.sleep,
+        monotonic=time.monotonic,
     ):
-        self.port = port or config.SERIAL_PORT
-        self.baudrate = baudrate or config.SERIAL_BAUD
-        self.led_count = led_count or config.LED_COUNT
+        self.port = config.SERIAL_PORT if port is None else port
+        self.baudrate = config.SERIAL_BAUD if baudrate is None else baudrate
+        self.led_count = config.LED_COUNT if led_count is None else led_count
         self._frame: list[Color] = [_BLACK] * self.led_count
         self._lock = threading.Lock()
-        self.last_sent = 0.0
-        # write_timeout 防止串口缓冲满时永久阻塞
-        self._ser = serial.Serial(
-            self.port, self.baudrate, timeout=0.1, write_timeout=0.5
+        self._write_lock = threading.Lock()
+        self._chunk_size = (
+            config.SERIAL_CHUNK_SIZE if chunk_size is None else chunk_size
         )
-        # 有些板子打开串口会触发复位，等它起来
-        time.sleep(0.3)
-        self._ser.reset_output_buffer()
+        self._chunk_delay = (
+            config.SERIAL_CHUNK_DELAY if chunk_delay is None else chunk_delay
+        )
+        self._failed_error: FrameWriteError | None = None
+        self.last_sent = 0.0
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._ser = open_serial_without_reset(
+            self.port, self.baudrate, serial_factory=serial_factory
+        )
+        try:
+            version = read_wled_version(self._ser, timeout=probe_timeout)
+            if not version.startswith(b"WLED"):
+                raise WledConnectionError(
+                    f"{self.port} did not return a valid WLED version response; "
+                    "check both USB connections and restart WLED before retrying"
+                )
+        except BaseException:
+            self._ser.close()
+            raise
 
     def prepare(self, brightness: int = 200, timeout: float = 5.0) -> bool:
         """串口方式无需预处理。保留此方法以兼容 WledSender 的调用点。
@@ -109,15 +193,26 @@ class SerialSender:
             self.flush()
 
     def flush(self) -> None:
-        """把当前帧推给 WLED。锁内快照、锁外写串口。"""
-        with self._lock:
-            snapshot = list(self._frame)
-        try:
-            self._ser.write(build_frame(snapshot))
-        except serial.SerialTimeoutException:
-            # 串口写超时通常意味着波特率设得比 WLED 侧低，帧堆积了
-            pass
-        self.last_sent = time.monotonic()
+        """把当前帧作为不可交错的分块写推给 WLED。"""
+        with self._write_lock:
+            if self._failed_error is not None:
+                raise self._failed_error
+            with self._lock:
+                snapshot = list(self._frame)
+            try:
+                write_frame(
+                    self._ser,
+                    build_frame(snapshot),
+                    chunk_size=self._chunk_size,
+                    chunk_delay=self._chunk_delay,
+                    sleep=self._sleep,
+                )
+            except (serial.SerialException, OSError) as exc:
+                self._failed_error = FrameWriteError(
+                    f"serial frame write failed on {self.port}; restart WLED before retrying"
+                )
+                raise self._failed_error from exc
+            self.last_sent = self._monotonic()
 
     # --- 兼容 WledSender 接口 ---
 

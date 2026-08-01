@@ -1,4 +1,4 @@
-"""主程序：监听 MIDI 输入，把 note 事件转发成 WARLS UDP 包。
+"""主程序：监听 MIDI 输入，把最新按键画面发送给 WLED。
 
 用法:
     uv run python -m midi_visualize.main --list          列出 MIDI 输入口
@@ -9,11 +9,64 @@
 import argparse
 import signal
 import sys
+import threading
+import time
 
 import mido
 
 from . import config, mapping
+from .frame_writer import LatestFrameWriter
 from .transport import describe, make_sender
+
+
+class MidiLightState:
+    """Build complete LED updates from the currently active MIDI notes."""
+
+    def __init__(self, led_mapper=mapping.note_to_leds, color_mapper=mapping.note_to_color):
+        self._led_mapper = led_mapper
+        self._color_mapper = color_mapper
+        self._active = {}
+        self._sequence = 0
+        self._lock = threading.Lock()
+
+    def handle(self, msg) -> list[tuple[int, tuple[int, int, int]]] | None:
+        with self._lock:
+            if msg.type == "note_on" and msg.velocity > 0:
+                self._sequence += 1
+                self._active[msg.note] = (
+                    self._sequence,
+                    self._color_mapper(msg.note, msg.velocity),
+                )
+            elif msg.type == "note_off" or (
+                msg.type == "note_on" and msg.velocity == 0
+            ):
+                self._active.pop(msg.note, None)
+            elif msg.type == "control_change" and msg.control in (120, 123):
+                self._active.clear()
+            else:
+                return None
+            return self._build_updates()
+
+    def _build_updates(self) -> list[tuple[int, tuple[int, int, int]]]:
+        colors_by_led = {}
+        active_by_sequence = sorted(
+            self._active.items(), key=lambda item: item[1][0]
+        )
+        for note, (_sequence, color) in active_by_sequence:
+            for led in self._led_mapper(note):
+                colors_by_led[led] = color
+        return sorted(colors_by_led.items())
+
+
+def make_midi_callback(state: MidiLightState, writer):
+    """Return a callback that only updates memory and schedules the latest frame."""
+
+    def callback(msg) -> None:
+        updates = state.handle(msg)
+        if updates is not None:
+            writer.submit(updates)
+
+    return callback
 
 
 def list_ports() -> None:
@@ -42,37 +95,26 @@ def pick_port(requested: str | None) -> str:
     sys.exit(f"找不到匹配 {requested!r} 的输入口。用 --list 查看可用端口。")
 
 
-def run(port_name: str, sender) -> None:
-    """主循环。note on/off 直接在这里转成 UDP 包。
-
-    UDP sendto 是网络 syscall 而非 multimedia 函数，几十微秒返回，
-    所以不需要额外的队列和工作线程。
-    """
-    active: set[int] = set()
-
-    with mido.open_input(port_name) as inport:
-        print(f"监听中: {port_name} → {describe()}")
-        print("按 Ctrl+C 退出（会自动熄灭所有灯）")
-
-        for msg in inport:
-            if msg.type == "note_on" and msg.velocity > 0:
-                color = mapping.note_to_color(msg.note, msg.velocity)
-                leds = mapping.note_to_leds(msg.note)
-                if leds:
-                    active.add(msg.note)
-                    sender.send([(led, color) for led in leds])
-
-            elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-                # 有些琴用 velocity=0 的 note_on 代替 note_off
-                leds = mapping.note_to_leds(msg.note)
-                if leds:
-                    active.discard(msg.note)
-                    sender.send([(led, (0, 0, 0)) for led in leds])
-
-            elif msg.type == "control_change" and msg.control in (120, 123):
-                # CC120 all sound off / CC123 all notes off
-                active.clear()
-                sender.all_off()
+def run(
+    port_name: str,
+    sender,
+    writer_factory=LatestFrameWriter,
+    open_input=mido.open_input,
+    poll_interval: float = 0.1,
+) -> None:
+    """Receive MIDI in callbacks while one worker sends only the latest frame."""
+    state = MidiLightState()
+    writer = writer_factory(sender, keepalive=config.SERIAL_KEEPALIVE)
+    writer.start()
+    try:
+        with open_input(port_name, callback=make_midi_callback(state, writer)):
+            print(f"监听中: {port_name} → {describe()}")
+            print("按 Ctrl+C 退出（会自动熄灭所有灯）")
+            while not writer.wait_for_failure(poll_interval):
+                time.sleep(0)
+            writer.raise_if_failed()
+    finally:
+        writer.stop()
 
 
 def main() -> None:
@@ -91,13 +133,19 @@ def main() -> None:
     # SIGINT 交给 KeyboardInterrupt 处理，确保 context manager 的 all_off 能跑到
     signal.signal(signal.SIGINT, signal.default_int_handler)
 
-    with make_sender(ip=args.ip) as sender:
+    sender = make_sender(ip=args.ip)
+    healthy = False
+    try:
         if not sender.prepare():
             print("警告：设备准备失败，灯可能不响应。")
         try:
             run(port_name, sender)
         except KeyboardInterrupt:
             print("\n退出，熄灭所有灯。")
+        sender.all_off()
+        healthy = True
+    finally:
+        sender.close()
 
 
 if __name__ == "__main__":

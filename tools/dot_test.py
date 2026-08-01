@@ -13,12 +13,14 @@ import os
 import sys
 import time
 
-import serial
-
 # 让 src 下的包可以直接 import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from midi_visualize.adalight import build_frame  # noqa: E402
+from midi_visualize.adalight import (  # noqa: E402
+    build_frame,
+    open_serial_without_reset as open_safe,
+    write_frame,
+)
 
 PORT  = "COM4"
 BAUD  = 115200
@@ -30,41 +32,12 @@ HOLD  = 10.0     # 亮灯持续秒数
 REFRESH = 1.0    # 在 WLED realtime 超时前续帧
 
 
-def open_safe(port: str, baud: int) -> serial.Serial:
-    """打开串口前先将 DTR/RTS 置为非激活，避免触发 ESP32 自动复位。"""
-    ser = serial.Serial()
-    ser.port = port
-    ser.baudrate = baud
-    ser.timeout = 0.1
-    ser.write_timeout = 0.5
-    ser.dtr = False
-    ser.rts = False
-    ser.open()
-    return ser
-
-
 def make_frame(lit: bool) -> bytes:
     if lit:
         colors = [WHITE if i % STEP == 0 else BLACK for i in range(COUNT)]
     else:
         colors = [BLACK] * COUNT
     return build_frame(colors)
-
-
-def write_frame(
-    ser: serial.Serial,
-    frame: bytes,
-    chunk_size: int = 16,
-    chunk_delay: float = 0.003,
-    sleep=time.sleep,
-) -> None:
-    """按 115200 bps 可承受的速度发送，避免原生 USB CDC 丢包。"""
-    for offset in range(0, len(frame), chunk_size):
-        ser.write(frame[offset : offset + chunk_size])
-        ser.flush()
-        if offset + chunk_size < len(frame):
-            sleep(chunk_delay)
-
 
 def main() -> None:
     lit_count = len(range(0, COUNT, STEP))
@@ -73,7 +46,7 @@ def main() -> None:
     print(f"打开 {PORT} @ {BAUD} bps ...")
     with open_safe(PORT, BAUD) as ser:
         print(f"发送亮灯帧：{lit_count} 颗白灯（索引 0, 10, 20, ...）")
-        write_frame(ser, lit_frame)
+        write_frame(ser, lit_frame, chunk_size=16, chunk_delay=0.003)
 
         print(f"等待 {HOLD:.0f} 秒 ...")
         deadline = time.monotonic() + HOLD
@@ -82,11 +55,11 @@ def main() -> None:
             now = time.monotonic()
             time.sleep(min(next_refresh - now, deadline - now))
             if time.monotonic() < deadline:
-                write_frame(ser, lit_frame)
+                write_frame(ser, lit_frame, chunk_size=16, chunk_delay=0.003)
                 next_refresh = time.monotonic() + REFRESH
 
         print("发送全灭帧 ...")
-        write_frame(ser, off_frame)
+        write_frame(ser, off_frame, chunk_size=16, chunk_delay=0.003)
 
     print("完成。")
 

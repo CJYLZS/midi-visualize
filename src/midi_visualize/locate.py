@@ -12,15 +12,15 @@
     数字+回车  直接跳到该索引
     q          退出并打印 LED_OFFSET
 
-注意：定位期间需要持续发包，否则 WLED 会在 WARLS_TIMEOUT 秒后
-退出 realtime 模式、恢复自身效果。本工具在每次按键后重发整帧。
+注意：定位期间由唯一后台 writer 续发最新完整帧，防止 WLED 退出
+realtime 模式，并避免前台更新与 keepalive 的串口块交错。
 """
 
 import argparse
-import threading
 import time
 
 from . import config
+from .frame_writer import LatestFrameWriter
 from .transport import describe, make_sender
 
 # 定位期间用高亮度，灯条裸放时也能一眼看清。
@@ -31,7 +31,7 @@ _MARK_10 = (0, 200, 0)         # 每 10 颗：亮绿
 _MARK_50 = (255, 0, 0)         # 每 50 颗：亮红
 
 
-def _paint(sender, cursor: int, marks: bool) -> None:
+def _paint(writer, led_count: int, cursor: int, marks: bool) -> None:
     """把一帧画进缓冲并推送：全黑 + 可选标记 + 光标。
 
     光标画成"两侧暗红 + 中心亮白"，这样在一堆绿色标记点里也能一眼找到，
@@ -39,43 +39,14 @@ def _paint(sender, cursor: int, marks: bool) -> None:
     """
     updates: list[tuple[int, tuple[int, int, int]]] = []
     if marks:
-        for i in range(0, sender.led_count, 10):
+        for i in range(0, led_count, 10):
             updates.append((i, _MARK_50 if i % 50 == 0 else _MARK_10))
     # 先画光标两翼，再画中心，确保中心不被覆盖
     for side in (cursor - 1, cursor + 1):
-        if 0 <= side < sender.led_count:
+        if 0 <= side < led_count:
             updates.append((side, _CURSOR_HALO))
     updates.append((cursor, _CURSOR))
-    sender.set_exclusive(updates)
-
-
-class _Keepalive:
-    """后台重发当前帧，防止 WLED realtime 超时退出。
-
-    只在"距上次发送超过 interval"时才补发。主线程每次移动光标都会
-    立即 flush，此时 keepalive 应当保持沉默 —— 否则两个线程同时推
-    964 字节的整帧，白白占满带宽并让 WLED 排队，表现为移动卡顿。
-    """
-
-    def __init__(self, sender, interval: float = 1.0):
-        self._sender = sender
-        self._interval = interval
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-
-    def _loop(self) -> None:
-        while not self._stop.wait(self._interval / 4):
-            if time.monotonic() - self._sender.last_sent >= self._interval:
-                self._sender.flush()
-
-    def __enter__(self):
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc_info):
-        self._stop.set()
-        self._thread.join(timeout=2)
-        return False
+    writer.submit(updates)
 
 
 def main() -> None:
@@ -89,19 +60,21 @@ def main() -> None:
     args = parser.parse_args()
 
     sender = make_sender(ip=args.ip, led_count=args.total)
+    writer = LatestFrameWriter(sender, keepalive=config.SERIAL_KEEPALIVE)
+    writer.start()
 
     if not sender.prepare():
-        print(f"警告：无法通过 HTTP 配置 {args.ip}。")
-        print("如果灯没反应，检查 WLED 里 realtime override 是否为 0、电源是否开启。")
+        print("警告：设备准备失败，灯可能不响应。")
 
     if args.at is not None:
-        _paint(sender, args.at, args.marks)
-        # 单次点亮也需要维持几秒，否则立刻超时退出
-        for _ in range(6):
-            time.sleep(0.5)
-            sender.flush()
-        print(f"已点亮 LED {args.at}（保持 3 秒）")
-        sender.close()
+        try:
+            _paint(writer, args.total, args.at, args.marks)
+            time.sleep(3.0)
+            writer.raise_if_failed()
+            print(f"已点亮 LED {args.at}（保持 3 秒）")
+        finally:
+            writer.stop()
+            sender.close()
         return
 
     cursor = 0
@@ -110,30 +83,33 @@ def main() -> None:
     print("把白色光标移到最低音 A0 琴键的正上方，然后按 q。\n")
 
     try:
-        with _Keepalive(sender):
-            while True:
-                _paint(sender, cursor, args.marks)
-                raw = input(f"当前 LED [{cursor}] > ").strip()
+        while True:
+            _paint(writer, args.total, cursor, args.marks)
+            writer.raise_if_failed()
+            raw = input(f"当前 LED [{cursor}] > ").strip()
 
-                if not raw:
-                    continue
-                if raw == "q":
-                    break
-                if raw.isdigit():
-                    cursor = max(0, min(int(raw), args.total - 1))
-                    continue
+            if not raw:
+                continue
+            if raw == "q":
+                break
+            if raw.isdigit():
+                cursor = max(0, min(int(raw), args.total - 1))
+                continue
 
-                step = {"a": -1, "d": 1, "A": -10, "D": 10, "w": -5, "s": 5}.get(raw)
-                if step is None:
-                    print("无效输入。用 a/d(±1) w/s(±5) A/D(±10) 数字 q")
-                    continue
-                cursor = max(0, min(cursor + step, args.total - 1))
+            step = {"a": -1, "d": 1, "A": -10, "D": 10, "w": -5, "s": 5}.get(raw)
+            if step is None:
+                print("无效输入。用 a/d(±1) w/s(±5) A/D(±10) 数字 q")
+                continue
+            cursor = max(0, min(cursor + step, args.total - 1))
     except (KeyboardInterrupt, EOFError):
         print()
     finally:
         print(f"\n最低音 A0 对应 LED_OFFSET = {cursor}")
         print("把这个值写进 src/midi_visualize/config.py 的 LED_OFFSET")
-        sender.close()
+        try:
+            writer.stop()
+        finally:
+            sender.close()
 
 
 if __name__ == "__main__":

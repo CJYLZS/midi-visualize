@@ -35,3 +35,10 @@ def test_write_frame_sends_complete_data_in_paced_chunks():
     assert serial_port.writes == [frame[:16], frame[16:32], frame[32:]]
     assert serial_port.flush_count == 3
     assert delays == [0.003, 0.003]
+
+
+def test_dot_test_reuses_production_serial_helpers():
+    from midi_visualize import adalight
+
+    assert dot_test.open_safe is adalight.open_serial_without_reset
+    assert dot_test.write_frame is adalight.write_frame

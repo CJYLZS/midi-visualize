@@ -6,18 +6,10 @@ import time
 
 import serial
 
+from .adalight import open_serial_without_reset
 
-def open_without_reset(port, baudrate, serial_factory=serial.Serial):
-    """Open a serial port with CDC control lines inactive from the start."""
-    serial_port = serial_factory()
-    serial_port.port = port
-    serial_port.baudrate = baudrate
-    serial_port.timeout = 0.1
-    serial_port.write_timeout = 1.0
-    serial_port.dtr = False
-    serial_port.rts = False
-    serial_port.open()
-    return serial_port
+
+open_without_reset = open_serial_without_reset
 
 
 def read_reply(serial_port, payload, timeout=3.0):

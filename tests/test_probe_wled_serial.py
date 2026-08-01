@@ -25,3 +25,7 @@ def test_control_lines_are_inactive_before_open():
     open_index = serial_port.events.index(("open", None))
     assert serial_port.events.index(("dtr", False)) < open_index
     assert serial_port.events.index(("rts", False)) < open_index
+
+
+def test_probe_reuses_shared_safe_serial_opener():
+    assert serial_probe.open_without_reset is serial_probe.open_serial_without_reset

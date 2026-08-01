@@ -1,16 +1,18 @@
 """可调参数集中在这里。硬件到货后主要调这个文件。"""
 
 # --- 传输方式 ---
-# "serial" = USB 串口 Adalight（推荐：延迟 1~2ms，无抖动）
+# "serial" = USB 串口 Adalight（当前可靠基线约 180ms/完整帧）
 # "udp"    = WiFi UDP DNRGB（实测该网络中位 46ms、尖峰 2038ms，会卡顿）
 TRANSPORT = "serial"
 
 # --- USB 串口 ---
 SERIAL_PORT = "COM4"   # ESP32-S3 原生 USB (VID_303A) 的 CDC 口。
-                       # 注意：双口板上的 CH340 口(COM3) 只接了烧写控制信号，
-                       # 没接 UART0 数据线，串口命令完全无响应。必须用原生 USB 口。
-SERIAL_BAUD = 921600   # 必须与 WLED 的 Sync Interfaces → Baud Rate 一致。
-                       # 默认 115200 只够 12 FPS（320 颗 × 966 字节/帧）。
+                        # 注意：双口板上的 CH340 口(COM5) 没有 WLED 串口响应，
+                        # 没接 UART0 数据线，串口命令完全无响应。必须用原生 USB 口。
+SERIAL_BAUD = 115200   # 必须与 WLED 的 Sync Interfaces → Baud Rate 一致。
+SERIAL_CHUNK_SIZE = 16
+SERIAL_CHUNK_DELAY = 0.003
+SERIAL_KEEPALIVE = 1.0
 
 # --- WiFi（TRANSPORT = "udp" 时才用到）---
 ESP32_IP = "192.168.31.153"
