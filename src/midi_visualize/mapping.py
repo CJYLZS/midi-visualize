@@ -1,7 +1,7 @@
 """MIDI note → LED 索引映射。纯函数，无副作用，无硬件依赖。
 
 每个键映射到以其位置为中心的 3 颗 LED 窗口，相邻键窗口允许重叠。
-颜色按 COLOR_MODES 里的模式决定（默认白色），可选力度调亮度。
+颜色按 COLOR_MODES 里的模式决定，色值统一在 HSL 空间配置，可选力度调亮度。
 """
 
 from . import config
@@ -43,12 +43,17 @@ def note_to_leds(note: int) -> list[int]:
     return leds
 
 
-def hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
-    """HSV → RGB。h ∈ [0, 360)，s, v ∈ [0, 1]。返回 0..255 整数三元组。"""
+def hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
+    """HSL → RGB。h 为角度（自动取模 360），s/l 为 0-100 百分比（越界裁剪）。
+
+    单位与 config 里的 HSL 常量一致，配置值可以直接透传，不用换算。
+    """
     h = h % 360.0
-    c = v * s
+    s = max(0.0, min(100.0, s)) / 100.0
+    l = max(0.0, min(100.0, l)) / 100.0
+    c = (1 - abs(2 * l - 1)) * s
     x = c * (1 - abs((h / 60.0) % 2 - 1))
-    m = v - c
+    m = l - c / 2
     if h < 60:
         r, g, b = c, x, 0
     elif h < 120:
@@ -74,24 +79,25 @@ def _scale_for_velocity(base: tuple[int, int, int], velocity: int) -> tuple[int,
 
 
 def note_to_color(note: int, velocity: int) -> tuple[int, int, int]:
-    """统一白色，可选用力度调亮度。"""
-    return _scale_for_velocity(config.COLOR_WHITE_KEY, velocity)
+    """单色模式：所有键同色，可选用力度调亮度。"""
+    return _scale_for_velocity(hsl_to_rgb(*config.COLOR_DEFAULT_HSL), velocity)
 
 
 def note_to_color_rainbow(note: int, velocity: int) -> tuple[int, int, int]:
-    """八度彩虹：每个八度一个颜色（45°/八度，钢琴 7 个八度正好 7 色）。"""
-    octave = note // 12
-    return _scale_for_velocity(hsv_to_rgb(octave * 45, 1.0, 1.0), velocity)
+    """八度彩虹：色相按八度递进，反映音域位置。"""
+    hue = (note // 12) * config.OCTAVE_HUE_STEP
+    return _scale_for_velocity(
+        hsl_to_rgb(hue, config.OCTAVE_SATURATION, config.OCTAVE_LIGHTNESS), velocity
+    )
 
 
 def note_to_color_hue(note: int, velocity: int) -> tuple[int, int, int]:
-    """音高色相环：12 音高各占 30° 色相，同名音同色。"""
-    hue = (note % 12) * 30
-    return _scale_for_velocity(hsv_to_rgb(hue, 1.0, 1.0), velocity)
+    """音高色相环：查 PITCH_COLORS_HSL 表，同名音同色。"""
+    return _scale_for_velocity(hsl_to_rgb(*config.PITCH_COLORS_HSL[note % 12]), velocity)
 
 
 COLOR_MODES = {
-    "white": note_to_color,
+    "default": note_to_color,
     "rainbow": note_to_color_rainbow,
     "hue": note_to_color_hue,
 }

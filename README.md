@@ -26,7 +26,7 @@ uv run python -m midi_visualize.main --list
 # 2. 指定端口启动（支持部分匹配）
 uv run python -m midi_visualize.main --port "Clavinova"
 
-# 3. 指定颜色模式（white / rainbow / hue，默认 white）
+# 3. 指定颜色模式（default / rainbow / hue，默认 default）
 uv run python -m midi_visualize.main --port "Clavinova" --mode rainbow
 ```
 
@@ -121,8 +121,10 @@ uv run python tools/dot_test.py
 | `LED_OFFSET` | A0 左边缘 LED 索引 |
 | `KEYBOARD_LED_COUNT` | 琴键覆盖 LED 数（含 LED_OFFSET） |
 | `REVERSED` | 灯条反向（数据线在琴右侧时设 True） |
-| `COLOR_WHITE_KEY` / `COLOR_BLACK_KEY` | 键色（当前统一白色） |
-| `COLOR_MODE` | 默认颜色模式：`white` / `rainbow` / `hue`（可用 `--mode` 覆盖） |
+| `COLOR_MODE` | 默认颜色模式：`default` / `rainbow` / `hue`（可用 `--mode` 覆盖） |
+| `COLOR_DEFAULT_HSL` | 单色模式的颜色，HSL 三元组（当前 `(216, 69, 50)`） |
+| `PITCH_COLORS_HSL` | 十二音色表，12 组 HSL，索引 = `note % 12`（C 到 B） |
+| `OCTAVE_HUE_STEP` / `OCTAVE_SATURATION` / `OCTAVE_LIGHTNESS` | 八度彩虹的色相步长与固定饱和度/亮度 |
 | `VELOCITY_TO_BRIGHTNESS` / `MIN_BRIGHTNESS` | 力度映射亮度（1~127 → 30%~100%） |
 
 ### 波特率与延迟
@@ -136,11 +138,39 @@ uv run python tools/dot_test.py
 
 | 模式 | 说明 |
 |---|---|
-| `white`（默认） | 所有键统一白色，力度调亮度 |
-| `rainbow` | 八度彩虹：每个八度一个颜色，88 键共 7 色，反映音域位置 |
-| `hue` | 音高色相环：12 音高各占 30° 色相，同名音同色，能看出和弦构成 |
+| `default`（默认） | 所有键同色，取 `COLOR_DEFAULT_HSL`（当前 `hsl(216, 69%, 50%)` = `#286ED7` 蓝） |
+| `rainbow` | 八度彩虹：色相按八度递进，反映音域位置 |
+| `hue` | 音高色相环：查 `PITCH_COLORS_HSL` 表，同名音同色，能看出和弦构成 |
 
 三种模式都保留力度调亮度。启动时用 `--mode rainbow` 选择，或改 `config.py` 的 `COLOR_MODE` 作为默认。
+
+## 颜色配置（HSL）
+
+所有颜色都在 **HSL** 空间配置，与 SeeMusic 采用同一色彩空间，两边数值可以直接互抄。单位沿用 UI 惯例：**H 为 0-360 度，S / L 为 0-100 百分比**，和你在 SeeMusic 或任意取色器里看到的写法一致，不需要换算。
+
+`mapping.hsl_to_rgb(h, s, l)` 是唯一的色彩转换入口，越界的 S / L 会被裁剪，H 自动取模 360。
+
+### 从 SeeMusic 同步颜色
+
+1. 在 SeeMusic 里调好某个音的颜色，记下它的 H / S / L 三个数。
+2. 打开 `src/midi_visualize/config.py`，在 `PITCH_COLORS_HSL` 里找到对应音名那一行（表按 C, C#, D … B 顺序排列）。
+3. 把三个数替换进去，注释里的音名不要动，方便下次对照。
+
+```python
+PITCH_COLORS_HSL = (
+    (216, 69, 50),   # C   ← 改这一行就只改 C 的颜色
+    ( 30, 100, 50),  # C#
+    ...
+)
+```
+
+改完直接重启程序即可生效，不需要改代码。单色模式同理，改 `COLOR_DEFAULT_HSL`。
+
+表格必须保持 12 行，少一行会让 `note % 12` 越界；`uv run pytest` 里有一条测试专门拦这个错误。
+
+### 关于亮度均衡
+
+HSL 的 L 不是感知亮度。同样 `L=50%` 的 `hsl(60,100%,50%)`（黄）在 WS2812 上明显比 `hsl(240,100%,50%)`（蓝）刺眼，因为黄色两个通道全开而蓝色只有一个。想让十二色看起来亮度接近，需要逐音微调 L——把偏亮的黄/青调低几个点，把偏暗的蓝/紫调高几个点。这正是可配置色表的用处。
 
 ## 映射算法
 

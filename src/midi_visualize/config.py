@@ -30,10 +30,35 @@ REVERSED = False      # 灯条方向：True 表示数据线在琴的右侧
 FIRST_NOTE = 21   # A0
 KEY_COUNT = 88    # 到 C8 (108)
 
-# --- 配色 (R, G, B) ---
-COLOR_WHITE_KEY = (255, 255, 255)   # 所有键统一白色
-COLOR_BLACK_KEY = (255, 255, 255)
-COLOR_MODE = "white"   # 默认颜色模式：white / rainbow / hue（可用 --mode 覆盖）
+# --- 配色 (H, S, L) ---
+# 全部用 UI 惯例单位：H 为 0-360 度，S/L 为 0-100 百分比。
+# 与 SeeMusic 的取值方式一致，那边调好的数值可以直接抄进来。
+COLOR_MODE = "default"   # 默认颜色模式：default / rainbow / hue（可用 --mode 覆盖）
+
+# 单色模式：所有键同一个颜色
+COLOR_DEFAULT_HSL = (216, 69, 50)
+
+# 音高色相环：12 音各一组 HSL，按 C, C#, D ... B 顺序，索引 = note % 12。
+# 默认是 30° 均分、满饱和、L=50%。从 SeeMusic 抄数值时直接替换对应行。
+PITCH_COLORS_HSL = (
+    (  0, 100, 50),   # C
+    ( 30, 100, 50),   # C#
+    ( 60, 100, 50),   # D
+    ( 90, 100, 50),   # D#
+    (120, 100, 50),   # E
+    (150, 100, 50),   # F
+    (180, 100, 50),   # F#
+    (210, 100, 50),   # G
+    (240, 100, 50),   # G#
+    (270, 100, 50),   # A
+    (300, 100, 50),   # A#
+    (330, 100, 50),   # B
+)
+
+# 八度彩虹：色相 = 八度序号 × OCTAVE_HUE_STEP，饱和度/亮度固定
+OCTAVE_HUE_STEP = 45
+OCTAVE_SATURATION = 100
+OCTAVE_LIGHTNESS = 50
 
 # --- 力度 ---
 VELOCITY_TO_BRIGHTNESS = True

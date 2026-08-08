@@ -93,11 +93,15 @@ class TestNoteToLeds:
 
 
 class TestVelocityColor:
-    def test_black_and_white_same_white(self):
-        assert mapping.note_to_color(60, 127) == mapping.note_to_color(61, 127) == (255, 255, 255)
+    def test_black_and_white_keys_share_one_color(self):
+        assert mapping.note_to_color(60, 127) == mapping.note_to_color(61, 127)
 
-    def test_max_velocity_gives_base_color(self):
-        assert mapping.note_to_color(60, 127) == config.COLOR_WHITE_KEY
+    def test_max_velocity_gives_configured_color(self):
+        assert mapping.note_to_color(60, 127) == mapping.hsl_to_rgb(*config.COLOR_DEFAULT_HSL)
+
+    def test_follows_configured_hsl(self, monkeypatch):
+        monkeypatch.setattr(config, "COLOR_DEFAULT_HSL", (120, 100, 50))
+        assert mapping.note_to_color(60, 127) == (0, 255, 0)
 
     def test_louder_is_brighter(self):
         soft = sum(mapping.note_to_color(60, 1))
@@ -111,30 +115,46 @@ class TestVelocityColor:
                 assert 0 <= c <= 255
 
 
-class TestHsvToRgb:
+class TestHslToRgb:
     def test_red_at_zero(self):
-        assert mapping.hsv_to_rgb(0, 1.0, 1.0) == (255, 0, 0)
+        assert mapping.hsl_to_rgb(0, 100, 50) == (255, 0, 0)
 
     def test_green_at_120(self):
-        assert mapping.hsv_to_rgb(120, 1.0, 1.0) == (0, 255, 0)
+        assert mapping.hsl_to_rgb(120, 100, 50) == (0, 255, 0)
 
     def test_blue_at_240(self):
-        assert mapping.hsv_to_rgb(240, 1.0, 1.0) == (0, 0, 255)
+        assert mapping.hsl_to_rgb(240, 100, 50) == (0, 0, 255)
 
-    def test_value_scales_all_channels(self):
-        assert mapping.hsv_to_rgb(0, 1.0, 0.5) == (128, 0, 0)
+    def test_seemusic_reference_value(self):
+        """默认单色的 HSL 必须算成这个 RGB，否则从 SeeMusic 抄来的数值都会偏。"""
+        assert mapping.hsl_to_rgb(216, 69, 50) == (40, 110, 215)
 
-    def test_white_at_zero_saturation(self):
-        assert mapping.hsv_to_rgb(123, 0.0, 1.0) == (255, 255, 255)
+    def test_zero_lightness_is_black(self):
+        assert mapping.hsl_to_rgb(123, 100, 0) == (0, 0, 0)
+
+    def test_full_lightness_is_white(self):
+        assert mapping.hsl_to_rgb(123, 100, 100) == (255, 255, 255)
+
+    def test_zero_saturation_is_grey(self):
+        r, g, b = mapping.hsl_to_rgb(123, 0, 50)
+        assert r == g == b
+
+    def test_lightness_below_half_darkens(self):
+        assert mapping.hsl_to_rgb(0, 100, 25) == (128, 0, 0)
 
     def test_hue_wraps_above_360(self):
-        assert mapping.hsv_to_rgb(360, 1.0, 1.0) == mapping.hsv_to_rgb(0, 1.0, 1.0)
+        assert mapping.hsl_to_rgb(360, 100, 50) == mapping.hsl_to_rgb(0, 100, 50)
+
+    def test_out_of_range_percentages_are_clamped(self):
+        assert mapping.hsl_to_rgb(0, 200, 50) == mapping.hsl_to_rgb(0, 100, 50)
+        assert mapping.hsl_to_rgb(0, 100, -10) == mapping.hsl_to_rgb(0, 100, 0)
 
     def test_always_valid_rgb_range(self):
         for h in range(0, 360, 30):
-            for s in (0.0, 0.5, 1.0):
-                for c in mapping.hsv_to_rgb(h, s, 0.7):
-                    assert 0 <= c <= 255
+            for s in (0, 50, 100):
+                for l in (0, 30, 70, 100):
+                    for c in mapping.hsl_to_rgb(h, s, l):
+                        assert 0 <= c <= 255
 
 
 class TestRainbowMode:
@@ -147,6 +167,14 @@ class TestRainbowMode:
     def test_covers_each_octave(self):
         colors = {mapping.note_to_color_rainbow(n, 100) for n in range(21, 109)}
         assert len(colors) >= 7
+
+    def test_uses_configured_hue_step(self):
+        expected = mapping.hsl_to_rgb(
+            (60 // 12) * config.OCTAVE_HUE_STEP,
+            config.OCTAVE_SATURATION,
+            config.OCTAVE_LIGHTNESS,
+        )
+        assert mapping.note_to_color_rainbow(60, 127) == expected
 
     def test_all_channels_valid(self):
         for note in (21, 60, 108):
@@ -163,15 +191,25 @@ class TestHueMode:
     def test_same_pitch_class_same_color(self):
         assert mapping.note_to_color_hue(60, 100) == mapping.note_to_color_hue(72, 100)
 
-    def test_adjacent_semitones_differ_by_30_degrees(self):
-        a = mapping.hsv_to_rgb(60 * 30, 1.0, 1.0)
-        b = mapping.hsv_to_rgb(61 * 30, 1.0, 1.0)
-        assert mapping.note_to_color_hue(60, 127) == a
-        assert mapping.note_to_color_hue(61, 127) == b
+    def test_reads_the_configured_table(self):
+        for pc in range(12):
+            expected = mapping.hsl_to_rgb(*config.PITCH_COLORS_HSL[pc])
+            assert mapping.note_to_color_hue(60 + pc, 127) == expected
+
+    def test_editing_the_table_changes_the_color(self, monkeypatch):
+        """改 config 的色表即改颜色，这是与 SeeMusic 同步的关键能力。"""
+        table = list(config.PITCH_COLORS_HSL)
+        table[0] = (216, 69, 50)
+        monkeypatch.setattr(config, "PITCH_COLORS_HSL", tuple(table))
+        assert mapping.note_to_color_hue(60, 127) == (40, 110, 215)
 
     def test_all_twelve_pitch_classes_distinct(self):
         colors = {mapping.note_to_color_hue(n, 100) for n in range(60, 72)}
         assert len(colors) == 12
+
+    def test_covers_whole_keyboard_without_index_error(self):
+        for note in range(21, 109):
+            assert len(mapping.note_to_color_hue(note, 100)) == 3
 
     def test_velocity_still_dims(self):
         soft = sum(mapping.note_to_color_hue(60, 1))
@@ -181,15 +219,18 @@ class TestHueMode:
 
 class TestColorModes:
     def test_registry_has_all_three_modes(self):
-        assert set(mapping.COLOR_MODES) == {"white", "rainbow", "hue"}
+        assert set(mapping.COLOR_MODES) == {"default", "rainbow", "hue"}
 
     def test_registry_maps_to_callables(self):
         for name, fn in mapping.COLOR_MODES.items():
             assert callable(fn)
             assert len(fn(60, 100)) == 3
 
-    def test_white_mode_is_default_registered_color(self):
-        assert mapping.COLOR_MODES["white"] is mapping.note_to_color
+    def test_default_mode_is_the_solid_color(self):
+        assert mapping.COLOR_MODES["default"] is mapping.note_to_color
+
+    def test_configured_default_mode_is_registered(self):
+        assert config.COLOR_MODE in mapping.COLOR_MODES
 
 
 class TestDnrgbPacket:
